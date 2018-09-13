@@ -17,56 +17,13 @@ inline sse_float4 randFloat4() {
     res.elements[3] = randFloat(); //w
     return res;
 }
-/*
-void sse_test(Mesh &mesh) {
-    //Not allowed to change:
-    unsigned int const loadFactor = 1000;
-    //
-    std::vector<float4> vertices;
-    std::vector<float4> rand1;
-    std::vector<float4> rand2;
-    std::vector<float4> rand3;
-    std::vector<float4> rand4;
-    srand(time(NULL));
-
-    vertices.resize(mesh.vertexCount);
-    auto start3 = std::chrono::high_resolution_clock::now();
-    std::cout << "SSE_TEST: Initializing vectors... " << std::flush;
-    for (unsigned int i=0; i < vertices.size(); i++) {
-        vertices[i] = mesh.vertices[i];
-        rand1.push_back(randFloat4());
-        rand2.push_back(randFloat4());
-        rand3.push_back(randFloat4());
-        rand4.push_back(randFloat4());
-    }
-    std::cout << "finished!"  << std::endl;
-    auto end3 = std::chrono::high_resolution_clock::now();
-    std::cout << "Initializing vectors took: " << std::chrono::duration_cast<std::chrono::milliseconds>(end3 - start3).count() << " ms" << std::endl;
-    auto start1 = std::chrono::high_resolution_clock::now();
-    for (unsigned int j = 0; j < loadFactor; j++) {
-        std::cout << "SSE_TEST: " << (j+1) << "/" << loadFactor << " Crunching numbers on " << vertices.size() << " vertices... " << "\r" << std::flush;
-        for (unsigned int i=0; i < vertices.size(); i++) {
-            vertices[i] = vertices[i] + rand1[i];
-            vertices[i] = vertices[i] - rand2[i];
-            vertices[i] = vertices[i] * rand3[i];
-            if (rand4[i] != 0) {
-                vertices[i] = vertices[i] / rand4[i];
-            }
-        }
-    }
-    std::cout << std::endl;
-    auto end1 = std::chrono::high_resolution_clock::now();
-    std::cout << "Crunching values took: " << std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count() << " ms" << std::endl;
-} */
 
 void sse_test(Mesh &mesh) {
     //Not allowed to change:
     unsigned int const loadFactor = 1000;
     //
-
 
     std::vector<sse_float4> vertices;
-
     std::vector<sse_float4> rand1;
     rand1.resize(mesh.vertexCount);
     std::vector<sse_float4> rand2;
@@ -74,7 +31,7 @@ void sse_test(Mesh &mesh) {
     std::vector<sse_float4> rand3;
     rand3.resize(mesh.vertexCount);
     std::vector<sse_float4> rand4;
-    rand4.resize(mesh.vertexCount);
+    rand4.resize(mesh.vertexCount); //Memory
     srand(time(NULL));
 
     vertices.resize(mesh.vertexCount);
@@ -97,7 +54,7 @@ void sse_test(Mesh &mesh) {
     auto end3 = std::chrono::high_resolution_clock::now();
     std::cout << "Initializing vectors took: " << std::chrono::duration_cast<std::chrono::milliseconds>(end3 - start3).count() << " ms" << std::endl;
     auto start1 = std::chrono::high_resolution_clock::now();
-    for (unsigned int j = 0; j < loadFactor; j++) {
+    for (unsigned int j = 0; j < loadFactor; j++) { //Partial loop unrolling 
         std::cout << "SSE_TEST: " << (j+1) << "/" << loadFactor << " Crunching numbers on " << vertices.size() << " vertices... " << "\r" << std::flush;
         for (unsigned int i=0; i < vertices.size(); i+=3) {
             vertices[i+0].elements[0] = (vertices[i+0].elements[0] + rand1[i+0].elements[0]- rand2[i+0].elements[0]) * rand3[i+0].elements[0]; //x
@@ -111,7 +68,7 @@ void sse_test(Mesh &mesh) {
             vertices[i+0].elements[2] = (vertices[i+0].elements[2] + rand1[i+0].elements[2]- rand2[i+0].elements[2]) * rand3[i+0].elements[2]; //z
             vertices[i+1].elements[2] = (vertices[i+1].elements[2] + rand1[i+1].elements[2]- rand2[i+1].elements[2]) * rand3[i+1].elements[2]; //z
             vertices[i+2].elements[2] = (vertices[i+2].elements[2] + rand1[i+2].elements[2]- rand2[i+2].elements[2]) * rand3[i+2].elements[2]; //z
-            
+
             vertices[i+0].elements[3] = (vertices[i+0].elements[3] + rand1[i+0].elements[3]- rand2[i+0].elements[3]) * rand3[i+0].elements[3]; //w
             vertices[i+1].elements[3] = (vertices[i+1].elements[3] + rand1[i+1].elements[3]- rand2[i+1].elements[3]) * rand3[i+1].elements[3]; //w
             vertices[i+2].elements[3] = (vertices[i+2].elements[3] + rand1[i+2].elements[3]- rand2[i+2].elements[3]) * rand3[i+2].elements[3]; //w
@@ -141,4 +98,4 @@ void sse_test(Mesh &mesh) {
     std::cout << std::endl;
     auto end1 = std::chrono::high_resolution_clock::now();
     std::cout << "Crunching values took: " << std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start1).count() << " ms" << std::endl;
-} 
+}

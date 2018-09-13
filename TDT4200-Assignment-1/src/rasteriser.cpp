@@ -1,7 +1,10 @@
 #include "rasteriser.hpp"
 #include "utilities/lodepng.h"
 #include <vector>
-
+#include <chrono>
+#include <vector>
+#include <thread>
+#include <mutex>
 // --- Overview ---
 
 // I'm going to assume most of you who are reading through this file have never worked with computer graphics before.
@@ -24,7 +27,7 @@
 // A "fragment shader" is run on each rendered pixel, which determines the colour the pixel should receive.
 // The rendered image is stored in the so-called "framebuffer".
 
-
+std::mutex mtx;
 /**
  * Executes the vertex shader, transforms vertices and normals of the mesh object
  * @param mesh                    Mesh object with all vertices and normals
@@ -85,6 +88,38 @@ void runVertexShader( Mesh &mesh,
  * @param normal triangle pixel normal
  * @return		 colour of the pixel in RGBA
  */
+// std::vector<unsigned char> runFragmentShader( float3 const normal )
+// {
+// 	std::vector<unsigned char> pixelColour(4);
+// 	// const float3 lightDirection(0.0f, 0.0f, 1.0f);
+//
+// 	// Computing the dot product between the surface normal and a light
+// 	// direction gives a diffuse-like reflection. It looks more than
+// 	// good enough for a few static images.
+// 	// float colour = normal.x * lightDirection.x +
+// 	// 	normal.y * lightDirection.y +
+// 	// 	normal.z * lightDirection.z;
+//
+// 		// float colour = normal.z * lightDirection.z;
+//
+// 	// We first scale the colour value from a range between 0 and 1,
+// 	// to between 0 and 255.
+// 	// Since single bytes are only able to go between 0 and 255,
+// 	// we subsequently clamp the colour to lie within that range.
+// 	// unsigned char colourByte = (unsigned char) std::min(255.0f,
+// 	// 	std::max(normal.z * 255.0f, 0.0f));
+// 	// std::cout << std::min(255.0f, normal.z * 255.0f) << std::endl;
+// 	unsigned char colourByte = (unsigned char) std::min(255.0f, normal.z * 255.0f);
+// 	// And this writes the pixel to the pixelColor vector. The first three
+// 	// channels are red, green, and blue. The fourth represents transparency.
+// 	pixelColour.at(0) = colourByte;
+// 	pixelColour.at(1) = colourByte;
+// 	pixelColour.at(2) = colourByte;
+// 	pixelColour.at(3) = 255;
+// 	// This colour vector is supposed to go into the frame buffer
+// 	return pixelColour;
+// }
+
 std::vector<unsigned char> runFragmentShader( float3 const normal )
 {
 	std::vector<unsigned char> pixelColour(4);
@@ -127,7 +162,7 @@ std::vector<unsigned char> runFragmentShader( float3 const normal )
  * @param  w2 barycentric weight
  * @return    interpolated normal
  */
-float3 interpolateNormals( float4 const n0,
+	float3 interpolateNormals( float4 const n0,
 						   float4 const n1,
 					 	   float4 const n2,
 					 	   float const w0,
@@ -174,17 +209,18 @@ float4 convertClippingSpace( float4 const vertex,
  * @param  y  screen pixel y-coordinate
  * @return    barycentric weights of the pixel in relation to the triangle vertices
  */
-float3 getTriangleBarycentricWeights( float4 const v0,
+	float3 getTriangleBarycentricWeights( float4 const v0,
 									  float4 const v1,
 									  float4 const v2,
 									  unsigned int const x,
 									  unsigned int const y )
 {
 	float3 res;
-	res.x = (((v1.y - v2.y) * (x    - v2.x)) + ((v2.x - v1.x) * (y    - v2.y))) /
-			(((v1.y - v2.y) * (v0.x - v2.x)) + ((v2.x - v1.x) * (v0.y - v2.y)));
-	res.y = (((v2.y - v0.y) * (x    - v2.x)) + ((v0.x - v2.x) * (y    - v2.y))) /
-			(((v1.y - v2.y) * (v0.x - v2.x)) + ((v2.x - v1.x) * (v0.y - v2.y)));
+
+	float invDenom = 1.0 / (((v1.y - v2.y) * (v0.x - v2.x)) + ((v2.x - v1.x) * (v0.y - v2.y)));
+	res.x = (((v1.y - v2.y) * (x    - v2.x)) + ((v2.x - v1.x) * (y    - v2.y))) * invDenom;
+
+	res.y = (((v2.y - v0.y) * (x    - v2.x)) + ((v0.x - v2.x) * (y    - v2.y))) * invDenom;
 	res.z = 1 - res.x - res.y;
 	return res;
 }
@@ -199,7 +235,7 @@ float3 getTriangleBarycentricWeights( float4 const v0,
  * @param  w2 barycentric weight
  * @return    pixel depth (z)
  */
-float getTrianglePixelDepth( float4 const v0,
+inline float getTrianglePixelDepth( float4 const v0,
 							 float4 const v1,
 							 float4 const v2,
 							 float const w0,
@@ -219,31 +255,31 @@ float getTrianglePixelDepth( float4 const v0,
  * @param width                   width of the image
  * @param height                  height of the image
  */
-void rasteriseTriangles( Mesh &mesh,
+void rasterise_th(
                          std::vector<float4> &transformedVertexBuffer,
                          std::vector<float4> &transformedNormalBuffer,
                          std::vector<unsigned char> &frameBuffer,
-                         std::vector<float> &depthBuffer,
+	                         std::vector<float> &depthBuffer,
                          unsigned int width,
-                         unsigned int height )
+                         unsigned int height,
+											 unsigned int index0,
+											 unsigned int index1,
+											 unsigned int index2 )
 {
-	// We rasterise one triangle at a time
-	unsigned int triangleCount = mesh.indexCount / 3;
-	for(unsigned int triangleIndex = 0; triangleIndex < triangleCount; triangleIndex++) {
-		// '\r' returns to the beginning of the current line
-		std::cout << "Rasterising triangle " << (triangleIndex + 1) << "/" << triangleCount << "\r" << std::flush;
 
-		// As vertices are commonly reused within a model, rendering libraries use an
-		// index buffer which specifies the indices of the vertices in the vertex buffer
-		// which together make up the specific triangle.
-		unsigned int index0 = mesh.indices[3 * triangleIndex + 0];
-		unsigned int index1 = mesh.indices[3 * triangleIndex + 1];
-		unsigned int index2 = mesh.indices[3 * triangleIndex + 2];
+	float4 *vertex0 = new float4();
+	float4 *vertex1 = new float4();
+	float4 *vertex2 = new float4();
 
-		// We look up those triangles here
-		float4 *vertex0 = new float4(transformedVertexBuffer.at(index0));
-		float4 *vertex1 = new float4(transformedVertexBuffer.at(index1));
-		float4 *vertex2 = new float4(transformedVertexBuffer.at(index2));
+	float4 *normal0 = new float4();
+	float4 *normal1 = new float4();
+	float4 *normal2 = new float4();
+
+	float3 *interpolatedNormal = new float3();
+
+		*vertex0 = transformedVertexBuffer.at(index0);
+		*vertex1 = transformedVertexBuffer.at(index1);
+		*vertex2 = transformedVertexBuffer.at(index2);
 
 		// These triangles are still in so-called "clipping space". We first convert them
 		// to screen pixel coordinates
@@ -251,42 +287,41 @@ void rasteriseTriangles( Mesh &mesh,
 		*vertex1 = convertClippingSpace(*vertex1, width, height);
 		*vertex2 = convertClippingSpace(*vertex2, width, height);
 
+		// clippingTime = clippingTime + std::chrono::duration_cast<std::chrono::microseconds>(stopClipping - startClipping).count();
 		// We iterate over each pixel on the screen
+
+		*normal0 = transformedNormalBuffer.at(index0);
+		*normal1 = transformedNormalBuffer.at(index1);
+		*normal2 = transformedNormalBuffer.at(index2);
+
 		for(unsigned int y = 0; y < height; y++) {
 			for(unsigned int x = 0; x < width; x++) {
+
+				float3 weights = getTriangleBarycentricWeights(*vertex0, *vertex1, *vertex2, x, y);
+				// Calculating the barycentric weights of the pixel in relation to the triangle
+				float weight0 = weights.x;
+				float weight1 = weights.y;
+				float weight2 = weights.z;
+
+				if(weight0>=0 && weight1>=0 && weight2>=0){
 				//Coordinate of the current pixel in the framebuffer, remember RGBA color code
 				unsigned int pixelBaseCoordinate = 4 * (x + y * width);
 
-				// Calculating the barycentric weights of the pixel in relation to the triangle
-				float weight0 = getTriangleBarycentricWeights(*vertex0, *vertex1, *vertex2, x, y).x;
-				float weight1 = getTriangleBarycentricWeights(*vertex0, *vertex1, *vertex2, x, y).y;
-				float weight2 = getTriangleBarycentricWeights(*vertex0, *vertex1, *vertex2, x, y).z;
+
 
 				// Now we can determine the depth of our pixel
 				float pixelDepth = getTrianglePixelDepth(*vertex0, *vertex1, *vertex2, weight0, weight1, weight2);
-
-				// Read the normals belonging to each vertex
-				float4 *normal0 = new float4(transformedNormalBuffer.at(index0));
-				float4 *normal1 = new float4(transformedNormalBuffer.at(index1));
-				float4 *normal2 = new float4(transformedNormalBuffer.at(index2));
-
+				if(pixelDepth >= -1 && pixelDepth <= 1) {
 				// But since a pixel can lie anywhere between the vertices, we compute an approximated normal
 				// at the pixel location by interpolating the ones from the vertices.
-				float3 *interpolatedNormal = new float3();
+
 				interpolatedNormal->x = interpolateNormals(*normal0, *normal1, *normal2, weight0, weight1, weight2).x;
 				interpolatedNormal->y = interpolateNormals(*normal0, *normal1, *normal2, weight0, weight1, weight2).y;
 				interpolatedNormal->z = interpolateNormals(*normal0, *normal1, *normal2, weight0, weight1, weight2).z;
 
-				// Cleanup
-				delete normal0;
-				delete normal1;
-				delete normal2;
-
-				// This process can slightly change the length, so we normalise it here to make sure the lighting calculations
-				// appear correct.
 				float normalLength = std::sqrt( interpolatedNormal->x * interpolatedNormal->x +
-					interpolatedNormal->y * interpolatedNormal->y +
-					interpolatedNormal->z * interpolatedNormal->z );
+				interpolatedNormal->y * interpolatedNormal->y +
+				interpolatedNormal->z * interpolatedNormal->z );
 
 				interpolatedNormal->x /= normalLength;
 				interpolatedNormal->y /= normalLength;
@@ -294,15 +329,7 @@ void rasteriseTriangles( Mesh &mesh,
 
 				// And we can now execute the fragment shader to compute this pixel's colour.
 				std::vector<unsigned char> pixelColour = runFragmentShader(*interpolatedNormal);
-
-				// Cleanup
-				delete interpolatedNormal;
-
-				// Z-clipping discards pixels too close or too far from the camera
-				if(pixelDepth >= -1 && pixelDepth <= 1) {
-					// The weights have the nice property that if only one is negative, the pixel lies outside the triangle
-					if(weight0 >= 0 && weight1 >= 0 && weight2 >= 0) {
-						//Have we drawn a pixel above the current?
+						mtx.lock();
 						if(pixelDepth < depthBuffer.at(y * width + x)) {
 							// This pixel is going into the frame buffer,
 							// save its depth to skip all next pixels underneath it
@@ -312,18 +339,74 @@ void rasteriseTriangles( Mesh &mesh,
 									frameBuffer.at(pixelBaseCoordinate + i) = pixelColour.at(i);
 							}
 						}
-					}
+						mtx.unlock();
 				}
 			}
 		}
-		// Cleanup
-		delete vertex0;
-		delete vertex1;
-		delete vertex2;
 	}
-	// finish the progress output with a new line
-	std::cout << std::endl;
+
+
+	delete normal0;
+	delete normal1;
+	delete normal2;
+	delete interpolatedNormal;
+	// Cleanup
+	delete vertex0;
+	delete vertex1;
+	delete vertex2;
 }
+
+
+void rasteriseTriangles( Mesh &mesh,
+                         std::vector<float4> &transformedVertexBuffer,
+                         std::vector<float4> &transformedNormalBuffer,
+                         std::vector<unsigned char> &frameBuffer,
+	                         std::vector<float> &depthBuffer,
+                         unsigned int width,
+                         unsigned int height )
+{
+
+	// We rasterise one triangle at a time
+	unsigned int triangleCount = mesh.indexCount / 3;
+	std::cout << "triangleCount: "<<triangleCount<<std::endl;
+	std::thread *triangles = new std::thread[triangleCount];
+
+	unsigned int  trianglesDone = 0;
+	while(0<(triangleCount-trianglesDone)){
+
+		unsigned int  nThreads = 0;
+		if(10000<triangleCount-trianglesDone){
+			nThreads = 10000;
+		}
+		else{
+			nThreads = triangleCount-trianglesDone;
+		}
+		std::cout << "trianglesDone: "<<trianglesDone<<std::endl;
+		for(unsigned int triangleIndex = trianglesDone; triangleIndex < trianglesDone+nThreads; triangleIndex++) {
+			try {
+				unsigned int index0 = mesh.indices[3 * triangleIndex + 0];
+				unsigned int index1 = mesh.indices[3 * triangleIndex + 1];
+				unsigned int index2 = mesh.indices[3 * triangleIndex + 2];
+
+				triangles[triangleIndex] = std::thread(rasterise_th, std::ref(transformedVertexBuffer), std::ref(transformedNormalBuffer), std::ref(frameBuffer), std::ref(depthBuffer), width, height, index0, index1, index2);
+			 } catch (const std::exception& e) {
+			 std::cout <<  e.what() <<std::endl;
+		 }
+		}
+		std::cout << "joining threads: "<<std::endl;
+		for(unsigned int triangleIndex = trianglesDone; triangleIndex < trianglesDone+nThreads; triangleIndex++) {
+
+			(*(triangles+triangleIndex)).join();
+		}
+
+		trianglesDone += nThreads;
+
+	}
+}
+
+
+
+
 
 /**
  * Procedure to kick of the rasterisation process
