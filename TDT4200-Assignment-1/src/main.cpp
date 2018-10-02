@@ -12,6 +12,11 @@ int main(int argc, char **argv) {
 	bool sse = false;
 
 
+
+
+
+
+
 	for (int i = 1; i < argc; i++) {
 		if (i < argc -1) {
 			if (std::strcmp("-i", argv[i]) == 0) {
