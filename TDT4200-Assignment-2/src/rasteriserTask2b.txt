@@ -282,7 +282,6 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
 	std::vector<unsigned char> localPartitionedFrameBuffer;
 	localPartitionedFrameBuffer.resize(frameBuffer.size());
 
-
 	for(unsigned i=0; i<globalDepthBuffer.size(); i++){
 		if(globalDepthBuffer.at(i)==depthBuffer.at(i)){
 			localPartitionedFrameBuffer.at(i*4) = frameBuffer.at(i*4);
@@ -291,7 +290,6 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
 			localPartitionedFrameBuffer.at(i*4+3) = frameBuffer.at(i*4+3);
 		}
 	}
-
 
 	MPI_Reduce(
     &(localPartitionedFrameBuffer.at(0)),
