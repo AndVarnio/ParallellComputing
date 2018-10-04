@@ -40,7 +40,13 @@ int main(int argc, char **argv) {
 	//	compare temp deapth to local deapth, if equal:
 	//		put corresponding local frame buffer into new frame buffer
 	//	use or reduction to send fram buffer to master
-	std::cout << "Writing image to '" << output << "'..." << std::endl;
+	int world_rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+	std::string substring = output.substr(0, output.find('.'));
+	output = substring + std::to_string(world_rank) + ".png";
+
+	// std::cout << "Writing image to '" << output << "'..." << std::endl;
 
 	unsigned error = lodepng::encode(output, frameBuffer, width, height);
 
@@ -48,7 +54,18 @@ int main(int argc, char **argv) {
 	{
 		std::cout << "An error occurred while writing the image file: " << error << ": " << lodepng_error_text(error) << std::endl;
 	}
+	/*
+	if(world_rank==0){
+		std::cout << "Writing image to '" << output << "'..." << std::endl;
 
+		unsigned error = lodepng::encode(output, frameBuffer, width, height);
+
+		if(error)
+		{
+			std::cout << "An error occurred while writing the image file: " << error << ": " << lodepng_error_text(error) << std::endl;
+		}
+	}
+*/
 	MPI_Finalize();
 	return 0;
 }
