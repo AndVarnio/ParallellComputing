@@ -215,10 +215,14 @@ typedef struct job {
 
 // define mutex, condition variable and deque here
 std::deque<struct job> jobQueue;
+std::condition_variable cv;
+std::mutex mtx;
 
 void addWork(struct job newJob)
 {
+	mtx.lock();
 	jobQueue.push_back(newJob);
+	mtx.unlock();
 }
 
 void marianiSilver(struct job marianiParameters)
@@ -261,8 +265,10 @@ void worker(void) {
 	bool bufferEmpty = false;
 	while(!bufferEmpty){
 		if(jobQueue.size()>0){
+			mtx.lock();
 			marianiSilver(jobQueue.front());
 			jobQueue.pop_front();
+			mtx.unlock();
 		}
 		else{
 			bufferEmpty=true;
