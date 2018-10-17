@@ -14,6 +14,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <thread>
+#include <chrono>
 
 static std::vector<std::pair<double,rgb>> colourGradient = {
 	{ 0.0		, { 0  , 0  , 0   } },
@@ -217,14 +218,16 @@ typedef struct job {
 std::deque<struct job> jobQueue;
 std::condition_variable cv;
 std::mutex mtx;
-
+bool bufferEmpty = false;
+bool ready = true;
+/*
 void addWork(struct job newJob)
 {
 	mtx.lock();
 	jobQueue.push_back(newJob);
 	mtx.unlock();
 }
-
+*/
 void marianiSilver(struct job marianiParameters)
 {
 	std::vector<std::vector<int>> &dwellBuffer = marianiParameters.dwellBuffer;
@@ -262,16 +265,48 @@ void help() {
 }
 
 void worker(void) {
-	bool bufferEmpty = false;
+	// bool bufferEmpty = false;
 	while(!bufferEmpty){
-		if(jobQueue.size()>0){
-			mtx.lock();
-			marianiSilver(jobQueue.front());
-			jobQueue.pop_front();
-			mtx.unlock();
-		}
-		else{
-			bufferEmpty=true;
+
+			std::unique_lock<std::mutex> lk(mtx);
+
+			if(cv.wait_for(lk, std::chrono::milliseconds(100), []{return jobQueue.size() > 0;})){
+				marianiSilver(jobQueue.front());
+				jobQueue.pop_front();
+			}
+			lk.unlock();
+    	cv.notify_one();
+	}
+}
+
+void addWork(std::vector<std::vector<int>> &dwellBuffer,
+					std::complex<double> const &cmin,
+					std::complex<double> const &dc,
+					unsigned int const atY,
+					unsigned int const atX,
+					unsigned int const blockSize){
+
+
+
+	int dwell = commonBorder(dwellBuffer, cmin, dc, atY, atX, blockSize);
+	if ((dwell>=0) || (blockSize <= blockDim)) {
+		struct job newJob = {dwellBuffer, cmin, dc, atY, atX, blockSize};
+
+		std::unique_lock<std::mutex> lk(mtx);
+		cv.wait(lk, []{return ready;});
+
+		jobQueue.push_back(newJob);
+
+		lk.unlock();
+		cv.notify_one();
+	}
+	else{
+		unsigned int newBlockSize = blockSize / subDiv;
+		for (unsigned int ydiv = 0; ydiv < subDiv; ydiv++) {
+			for (unsigned int xdiv = 0; xdiv < subDiv; xdiv++) {
+
+				addWork(dwellBuffer, cmin, dc, atY + (ydiv * newBlockSize), atX + (xdiv * newBlockSize), newBlockSize);
+			}
 		}
 	}
 }
@@ -283,22 +318,9 @@ void addFunction(std::vector<std::vector<int>> &dwellBuffer,
 					unsigned int const atX,
 					unsigned int const blockSize){
 
-	int dwell = commonBorder(dwellBuffer, cmin, dc, atY, atX, blockSize);
-	if ((dwell>=0) || (blockSize <= blockDim)) {
-		struct job newJob = {dwellBuffer, cmin, dc, atY, atX, blockSize};
-		addWork(newJob);
-	}
-	else{
-		unsigned int newBlockSize = blockSize / subDiv;
-		for (unsigned int ydiv = 0; ydiv < subDiv; ydiv++) {
-			for (unsigned int xdiv = 0; xdiv < subDiv; xdiv++) {
-
-				addFunction(dwellBuffer, cmin, dc, atY + (ydiv * newBlockSize), atX + (xdiv * newBlockSize), newBlockSize);
-			}
-		}
-	}
+	addWork(dwellBuffer, cmin, dc, atY, atX, blockSize);
+	bufferEmpty = true;
 }
-
 int main( int argc, char *argv[] )
 {
 
@@ -396,7 +418,21 @@ int main( int argc, char *argv[] )
 		// Mariani-Silver subdivision algorithm
 		// marianiSilver(dwellBuffer, cmin, dc, 0, 0, correctedBlockSize);
 
-		addFunction(dwellBuffer, cmin, dc, 0, 0, correctedBlockSize);
+
+		// Add here the worker for Task 2
+		const int nThreadsMax = std::thread::hardware_concurrency();
+
+		std::thread addJob_t(addFunction, std::ref(dwellBuffer), std::ref(cmin), std::ref(dc) ,0 ,  0 , correctedBlockSize);
+		// std::thread worker_threads[nThreadsMax];
+		std::vector<std::thread> worker_threads;
+		for(int threadN=0; threadN<nThreadsMax; threadN++){
+			worker_threads.push_back(std::thread(worker));
+		}
+
+		for(int threadN=0; threadN<nThreadsMax; threadN++){
+			worker_threads[threadN].join();
+		}
+		addJob_t.join();
 
 	} else {
 		// Traditional Mandelbrot-Set computation or the 'Escape Time' algorithm
@@ -405,9 +441,7 @@ int main( int argc, char *argv[] )
 			markBorder(dwellBuffer, dwellCompute, 0, 0, res);
 	}
 
-	// Add here the worker for Task 2
-	std::thread worker_t(&worker);
-	worker_t.join();
+
 	// The colour iterations defines how often the colour gradient will
 	// be seen on the final picture. Basically the repetitive factor
 	createColourMap(maxDwell / colourIterations);
