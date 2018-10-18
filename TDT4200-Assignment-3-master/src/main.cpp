@@ -266,7 +266,7 @@ void help() {
 
 void worker(void) {
 	// bool bufferEmpty = false;
-	while(!bufferEmpty){
+	while(!bufferEmpty||jobQueue.size()>0){
 
 			std::unique_lock<std::mutex> lk(mtx);
 
@@ -275,7 +275,7 @@ void worker(void) {
 				jobQueue.pop_front();
 			}
 			lk.unlock();
-    	cv.notify_one();
+    	cv.notify_all();
 	}
 }
 
@@ -298,7 +298,7 @@ void addWork(std::vector<std::vector<int>> &dwellBuffer,
 		jobQueue.push_back(newJob);
 
 		lk.unlock();
-		cv.notify_one();
+		cv.notify_all();
 	}
 	else{
 		unsigned int newBlockSize = blockSize / subDiv;
@@ -420,8 +420,8 @@ int main( int argc, char *argv[] )
 
 
 		// Add here the worker for Task 2
-		const int nThreadsMax = std::thread::hardware_concurrency();
-
+		//const int nThreadsMax = std::thread::hardware_concurrency();
+		const int nThreadsMax = 1;
 		std::thread addJob_t(addFunction, std::ref(dwellBuffer), std::ref(cmin), std::ref(dc) ,0 ,  0 , correctedBlockSize);
 		// std::thread worker_threads[nThreadsMax];
 		std::vector<std::thread> worker_threads;
