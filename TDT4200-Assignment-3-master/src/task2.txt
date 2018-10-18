@@ -13,9 +13,8 @@
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
-#include <omp.h>
-
-int thread_count = 10;
+#include <thread>
+#include <chrono>
 
 static std::vector<std::pair<double,rgb>> colourGradient = {
 	{ 0.0		, { 0  , 0  , 0   } },
@@ -113,29 +112,21 @@ int commonBorder(std::vector<std::vector<int>> &dwellBuffer,
 	unsigned int const yMax = (res > atY + blockSize - 1) ? atY + blockSize - 1 : res - 1;
 	unsigned int const xMax = (res > atX + blockSize - 1) ? atX + blockSize - 1 : res - 1;
 	int commonDwell = -1;
-
-	bool returnMinusOne = false;
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int i = 0; i < blockSize; i++) {
-		#pragma omp parallel for num_threads(thread_count)
 		for (unsigned int s = 0; s < 4; s++) {
 			unsigned const int y = s % 2 == 0 ? atY + i : (s == 1 ? yMax : atY);
 			unsigned const int x = s % 2 != 0 ? atX + i : (s == 0 ? xMax : atX);
-			if (y < res && x < res && !returnMinusOne) {
+			if (y < res && x < res) {
 				if (dwellBuffer.at(y).at(x) < 0) {
 					dwellBuffer.at(y).at(x) = pixelDwell(cmin, dc, y, x);
 				}
 				if (commonDwell == -1) {
 					commonDwell = dwellBuffer.at(y).at(x);
 				} else if (commonDwell != dwellBuffer.at(y).at(x)) {
-					returnMinusOne = true;
+					return -1;
 				}
 			}
 		}
-	}
-
-	if(returnMinusOne){
-		return -1;
 	}
 	return commonDwell;
 }
@@ -148,9 +139,7 @@ void markBorder(std::vector<std::vector<int>> &dwellBuffer,
 {
 	unsigned int const yMax = (res > atY + blockSize - 1) ? atY + blockSize - 1 : res - 1;
 	unsigned int const xMax = (res > atX + blockSize - 1) ? atX + blockSize - 1 : res - 1;
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int i = 0; i < blockSize; i++) {
-		#pragma omp parallel for num_threads(thread_count)
 		for (unsigned int s = 0; s < 4; s++) {
 			unsigned const int y = s % 2 == 0 ? atY + i : (s == 1 ? yMax : atY);
 			unsigned const int x = s % 2 != 0 ? atX + i : (s == 0 ? xMax : atX);
@@ -172,9 +161,7 @@ void threadedComputeBlock(std::vector<std::vector<int>> &dwellBuffer,
 {
 	unsigned int const yMax = (res > atY + blockSize) ? atY + blockSize : res;
 	unsigned int const xMax = (res > atX + blockSize) ? atX + blockSize : res;
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int y = atY + omitBorder; y < yMax - omitBorder; y++) {
-		#pragma omp parallel for num_threads(thread_count)
 		for (unsigned int x = atX + omitBorder; x < xMax - omitBorder; x++) {
 			dwellBuffer.at(y).at(x) = pixelDwell(cmin, dc, y, x);
 		}
@@ -191,9 +178,7 @@ void computeBlock(std::vector<std::vector<int>> &dwellBuffer,
 {
 	unsigned int const yMax = (res > atY + blockSize) ? atY + blockSize : res;
 	unsigned int const xMax = (res > atX + blockSize) ? atX + blockSize : res;
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int y = atY + omitBorder; y < yMax - omitBorder; y++) {
-		#pragma omp parallel for num_threads(thread_count)
 		for (unsigned int x = atX + omitBorder; x < xMax - omitBorder; x++) {
 			dwellBuffer.at(y).at(x) = pixelDwell(cmin, dc, y, x);
 		}
@@ -209,9 +194,7 @@ void fillBlock(std::vector<std::vector<int>> &dwellBuffer,
 {
 	unsigned int const yMax = (res > atY + blockSize) ? atY + blockSize : res;
 	unsigned int const xMax = (res > atX + blockSize) ? atX + blockSize : res;
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int y = atY + omitBorder; y < yMax - omitBorder; y++) {
-		#pragma omp parallel for num_threads(thread_count)
 		for (unsigned int x = atX + omitBorder; x < xMax - omitBorder; x++) {
 			if (dwellBuffer.at(y).at(x) < 0) {
 				dwellBuffer.at(y).at(x) = dwell;
@@ -222,7 +205,6 @@ void fillBlock(std::vector<std::vector<int>> &dwellBuffer,
 
 
 // define job data type here
-
 typedef struct job {
    std::vector<std::vector<int>> &dwellBuffer;
    std::complex<double> const &cmin;
@@ -233,19 +215,28 @@ typedef struct job {
 } job;
 
 // define mutex, condition variable and deque here
-
-void addWork(/* parameters */)
+std::deque<struct job> jobQueue;
+std::condition_variable cv;
+std::mutex mtx;
+bool bufferEmpty = false;
+bool ready = true;
+/*
+void addWork(struct job newJob)
 {
-
+	mtx.lock();
+	jobQueue.push_back(newJob);
+	mtx.unlock();
 }
-
-void marianiSilver( std::vector<std::vector<int>> &dwellBuffer,
-					std::complex<double> const &cmin,
-					std::complex<double> const &dc,
-					unsigned int const atY,
-					unsigned int const atX,
-					unsigned int const blockSize)
+*/
+void marianiSilver(struct job marianiParameters)
 {
+	std::vector<std::vector<int>> &dwellBuffer = marianiParameters.dwellBuffer;
+	std::complex<double> const &cmin = marianiParameters.cmin;
+	std::complex<double> const &dc = marianiParameters.dc;
+	unsigned int const atY = marianiParameters.atY;
+	unsigned int const atX = marianiParameters.atX;
+	unsigned int const blockSize = marianiParameters.blockSize;
+
 	int dwell = commonBorder(dwellBuffer, cmin, dc, atY, atX, blockSize);
 	if ( dwell >= 0 ) {
 		fillBlock(dwellBuffer, dwell, atY, atX, blockSize);
@@ -255,16 +246,6 @@ void marianiSilver( std::vector<std::vector<int>> &dwellBuffer,
 		computeBlock(dwellBuffer, cmin, dc, atY, atX, blockSize);
 		if (mark)
 			markBorder(dwellBuffer, dwellCompute, atY, atX, blockSize);
-	} else {
-		// Subdivision
-		unsigned int newBlockSize = blockSize / subDiv;
-		#pragma omp parallel for num_threads(thread_count)
-		for (unsigned int ydiv = 0; ydiv < subDiv; ydiv++) {
-			#pragma omp parallel for num_threads(thread_count)
-			for (unsigned int xdiv = 0; xdiv < subDiv; xdiv++) {
-				marianiSilver(dwellBuffer, cmin, dc, atY + (ydiv * newBlockSize), atX + (xdiv * newBlockSize), newBlockSize);
-			}
-		}
 	}
 }
 
@@ -284,11 +265,65 @@ void help() {
 }
 
 void worker(void) {
-	// Currently I'm doing nothing
+	// bool bufferEmpty = false;
+	while(!bufferEmpty||jobQueue.size()>0){
+
+			std::unique_lock<std::mutex> lk(mtx);
+
+			if(cv.wait_for(lk, std::chrono::milliseconds(100), []{return jobQueue.size() > 0;})){
+				marianiSilver(jobQueue.front());
+				jobQueue.pop_front();
+			}
+			lk.unlock();
+    	cv.notify_all();
+	}
 }
 
+void addWork(std::vector<std::vector<int>> &dwellBuffer,
+					std::complex<double> const &cmin,
+					std::complex<double> const &dc,
+					unsigned int const atY,
+					unsigned int const atX,
+					unsigned int const blockSize){
+
+
+
+	int dwell = commonBorder(dwellBuffer, cmin, dc, atY, atX, blockSize);
+	if ((dwell>=0) || (blockSize <= blockDim)) {
+		struct job newJob = {dwellBuffer, cmin, dc, atY, atX, blockSize};
+
+		std::unique_lock<std::mutex> lk(mtx);
+		cv.wait(lk, []{return ready;});
+
+		jobQueue.push_back(newJob);
+
+		lk.unlock();
+		cv.notify_all();
+	}
+	else{
+		unsigned int newBlockSize = blockSize / subDiv;
+		for (unsigned int ydiv = 0; ydiv < subDiv; ydiv++) {
+			for (unsigned int xdiv = 0; xdiv < subDiv; xdiv++) {
+
+				addWork(dwellBuffer, cmin, dc, atY + (ydiv * newBlockSize), atX + (xdiv * newBlockSize), newBlockSize);
+			}
+		}
+	}
+}
+
+void addFunction(std::vector<std::vector<int>> &dwellBuffer,
+					std::complex<double> const &cmin,
+					std::complex<double> const &dc,
+					unsigned int const atY,
+					unsigned int const atX,
+					unsigned int const blockSize){
+
+	addWork(dwellBuffer, cmin, dc, atY, atX, blockSize);
+	bufferEmpty = true;
+}
 int main( int argc, char *argv[] )
 {
+
 	std::string output = "output.png";
 	double x = 0.5, y = 0.5;
 	double scale = 1;
@@ -381,7 +416,24 @@ int main( int argc, char *argv[] )
 		// Calculate a dividable resolution for the blockSize:
 		unsigned int const correctedBlockSize = std::pow(subDiv,numDiv) * blockDim;
 		// Mariani-Silver subdivision algorithm
-		marianiSilver(dwellBuffer, cmin, dc, 0, 0, correctedBlockSize);
+		// marianiSilver(dwellBuffer, cmin, dc, 0, 0, correctedBlockSize);
+
+
+		// Add here the worker for Task 2
+		//const int nThreadsMax = std::thread::hardware_concurrency();
+		const int nThreadsMax = 1;
+		std::thread addJob_t(addFunction, std::ref(dwellBuffer), std::ref(cmin), std::ref(dc) ,0 ,  0 , correctedBlockSize);
+		// std::thread worker_threads[nThreadsMax];
+		std::vector<std::thread> worker_threads;
+		for(int threadN=0; threadN<nThreadsMax; threadN++){
+			worker_threads.push_back(std::thread(worker));
+		}
+
+		for(int threadN=0; threadN<nThreadsMax; threadN++){
+			worker_threads[threadN].join();
+		}
+		addJob_t.join();
+
 	} else {
 		// Traditional Mandelbrot-Set computation or the 'Escape Time' algorithm
 		computeBlock(dwellBuffer, cmin, dc, 0, 0, res, 0);
@@ -389,7 +441,6 @@ int main( int argc, char *argv[] )
 			markBorder(dwellBuffer, dwellCompute, 0, 0, res);
 	}
 
-	// Add here the worker for Task 2
 
 	// The colour iterations defines how often the colour gradient will
 	// be seen on the final picture. Basically the repetitive factor
@@ -398,9 +449,7 @@ int main( int argc, char *argv[] )
 	unsigned char *pixel = &(frameBuffer.at(0));
 
 	// Map the dwellBuffer to the frameBuffer
-	#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int y = 0; y < res; y++) {
-		#pragma omp parallel for num_threads(thread_count)// reduction(: pixel)
 		for (unsigned int x = 0; x < res; x++) {
 			// Getting a colour from the map depending on the dwell value and
 			// the coordinates as a complex number. This  method is responsible
@@ -408,10 +457,7 @@ int main( int argc, char *argv[] )
 			rgba const &colour = dwellColor(std::complex<double>(x,y), dwellBuffer.at(y).at(x));
 			// class rgba provides a method to directly write a colour into a
 			// framebuffer. The address to the next pixel is hereby returned
-			*(pixel+(y*4*res+4*x)) = colour.r;
-			*(pixel+(y*4*res+4*x+1)) = colour.g;
-			*(pixel+(y*4*res+4*x+2)) = colour.b;
-			*(pixel+(y*4*res+4*x+3)) = colour.a;
+			pixel = colour.putFramebuffer(pixel);
 		}
 	}
 
