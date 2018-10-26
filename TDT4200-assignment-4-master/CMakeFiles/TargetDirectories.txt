@@ -1,0 +1,3 @@
+/home/andreas/ParallellComputing/ParallellComputing/TDT4200-assignment-4-master/CMakeFiles/rebuild_cache.dir
+/home/andreas/ParallellComputing/ParallellComputing/TDT4200-assignment-4-master/CMakeFiles/gpurender.dir
+/home/andreas/ParallellComputing/ParallellComputing/TDT4200-assignment-4-master/CMakeFiles/edit_cache.dir

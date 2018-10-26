@@ -258,9 +258,9 @@ void marianiSilver( std::vector<std::vector<int>> &dwellBuffer,
 	} else {
 		// Subdivision
 		unsigned int newBlockSize = blockSize / subDiv;
-		#pragma omp parallel for num_threads(thread_count)
+		// #pragma omp parallel for num_threads(thread_count)
 		for (unsigned int ydiv = 0; ydiv < subDiv; ydiv++) {
-			#pragma omp parallel for num_threads(thread_count)
+			// #pragma omp parallel for num_threads(thread_count)
 			for (unsigned int xdiv = 0; xdiv < subDiv; xdiv++) {
 				marianiSilver(dwellBuffer, cmin, dc, atY + (ydiv * newBlockSize), atX + (xdiv * newBlockSize), newBlockSize);
 			}
