@@ -9,7 +9,7 @@
 #include "cuda_runtime.h"
 #include "utilities/cuda_error_helper.hpp"
 
-
+#include <stdio.h>
 // UTILITY FUNCTIONS HAVE BEEN MOVED INTO THE KERNEL SOURCE FILE ITSELF
 // CUDA relocatable and separable compilation is possible, but due to the many possible
 // problems it can cause on different platforms, I decided to take the safe route instead
@@ -112,7 +112,7 @@ struct workItemGPU {
     workItemGPU() : scale(1), distanceOffset(make_float3(0, 0, 0)) {}
 };
 
-void runVertexShader( float4 &vertex,
+__host__ __device__ void runVertexShader( float4 &vertex,
                       float3 positionOffset,
                       float scale,
 					  unsigned int const width,
@@ -176,7 +176,7 @@ void runVertexShader( float4 &vertex,
 }
 
 
-void runFragmentShader( unsigned char* frameBuffer,
+__host__ __device__ void runFragmentShader( unsigned char* frameBuffer,
 						unsigned int const baseIndex,
 						GPUMesh &mesh,
 						unsigned int triangleIndex,
@@ -227,7 +227,7 @@ void runFragmentShader( unsigned char* frameBuffer,
  * @param width                   width of the image
  * @param height                  height of the image
  */
-void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
+__host__ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
                         GPUMesh &mesh,
                         unsigned int triangleIndex,
                         unsigned char* frameBuffer,
@@ -278,7 +278,7 @@ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 }
 
 
-void renderMeshes(
+__global__ void renderMeshes(
         unsigned long totalItemsToRender,
         workItemGPU* workQueue,
         GPUMesh* meshes,
@@ -288,7 +288,8 @@ void renderMeshes(
         unsigned char* frameBuffer,
         int* depthBuffer
 ) {
-
+/*
+		printf("Hello world\n");
     for(unsigned int item = 0; item < totalItemsToRender; item++) {
         workItemGPU objectToRender = workQueue[item];
 
@@ -306,6 +307,14 @@ void renderMeshes(
             }
         }
     }
+
+*/
+				for (unsigned int i = 0; i < (4 * width * height); i+=4) {
+				frameBuffer[i + 0] = 255;
+				frameBuffer[i + 1] = 255;
+				frameBuffer[i + 2] = 255;
+				frameBuffer[i + 3] = 255;
+			}
 }
 
 
@@ -365,6 +374,7 @@ __global__ void initFrameBuffer(unsigned char* buffer){
 __global__ void initDepthBuffer(int* buffer){
 	buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.x*blockDim.y+threadIdx.y*blockDim.x+threadIdx.x] = 16777216;
 }
+
 // This function kicks off the rasterisation process.
 std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int width, unsigned int height, unsigned int depthLimit) {
 
@@ -393,8 +403,13 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 		dim3 blockSize(8, 8, 8);
 		initFrameBuffer<<<gridSize, blockSize>>>(frameBufferPtr);
 		cudaDeviceSynchronize();
+
 		// The depth buffer is used to make sure that objects closer to the camera occlude/obscure objects that are behind it
-    for (unsigned int i = 0; i < (4 * width * height); i+=4) {
+
+		// cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
+
+
+		for (unsigned int i = 0; i < (4 * width * height); i+=4) {
 		frameBuffer[i + 0] = 0;
 		frameBuffer[i + 1] = 0;
 		frameBuffer[i + 2] = 0;
@@ -413,8 +428,6 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 		for(unsigned int i = 0; i < width * height; i++) {
 	    	depthBuffer[i] = 16777216; // = 2 ^ 24
 	    }
-
-
 
     float3 boundingBoxMin = make_float3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
     float3 boundingBoxMax = make_float3(std::numeric_limits<float>::min(), std::numeric_limits<float>::min(), std::numeric_limits<float>::min());
@@ -499,15 +512,35 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 		cudaError_t(cudaMemcpy(workItemGPUPtr, workQueue, totalItemsToRender*sizeof(workItemGPU), cudaMemcpyHostToDevice));
 
 		std::cout << "Not my fault" <<std::endl;
-		renderMeshes(
-			totalItemsToRender, workQueue,
-			meshes.data(), meshes.size(),
-			width, height, frameBuffer, depthBuffer);
+
+		// renderMeshes(
+		// 	totalItemsToRender, workItemGPUPtr,
+		// 	meshesGpu, meshes.size(),
+		// 	width, height, frameBufferPtr, depthBufferPtr);
+
+
+		renderMeshes<<<1, 1>>>(totalItemsToRender, workItemGPUPtr,
+			meshesGpu, meshes.size(),
+			width, height, frameBufferPtr, depthBufferPtr);
+			cudaDeviceSynchronize();
+		// renderMeshes(
+		// totalItemsToRender, workQueue,
+		// 	meshes.data(), meshes.size(),
+		// 	width, height, frameBuffer, depthBuffer);
 
     std::cout << "Finished!" << std::endl;
 
+		cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
+
+	// 	for (unsigned int i = 0; i < (4 * width * height); i+=4) {
+	// 	frameBuffer[i + 0] = 255;
+	// 	frameBuffer[i + 1] = 255;
+	// 	frameBuffer[i + 2] = 255;
+	// 	frameBuffer[i + 3] = 255;
+	// }
     // Copy the output picture into a vector so that the image dump code is happy :)
     std::vector<unsigned char> outputFramebuffer(frameBuffer, frameBuffer + (width * height * 4));
+
 
     return outputFramebuffer;
 }
