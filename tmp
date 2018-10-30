@@ -219,6 +219,39 @@ __host__ __device__ void runFragmentShader( unsigned char* frameBuffer,
 
 }
 
+__global__ void rasteriseTriangleLoops(float4 &v0, float4 &v1, float4 &v2,
+												GPUMesh &mesh,
+												unsigned int triangleIndex,
+												unsigned char* frameBuffer,
+												int* depthBuffer,
+												unsigned int const width,
+												unsigned int const height){
+
+												// 	uint i = (blockIdx.x * blockDim.x) + threadIdx.x;
+												// uint j = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+	// float u, v, w;
+	// // For each point in the bounding box, determine whether that point lies inside the triangle
+	// if (isPointInTriangle(v0, v1, v2, x, y, u, v, w)) {
+	// 	// If it does, compute the distance between that point on the triangle and the screen
+	// 	float pixelDepth = computeDepth(v0, v1, v2, make_float3(u, v, w));
+	// 	// If the point is closer than any point we have seen thus far, render it.
+	// 	// Otherwise it is hidden behind another object, and we can throw it away
+	// 	// Because it will be invisible anyway.
+	// 					if (pixelDepth >= -1 && pixelDepth <= 1) {
+	// 		int pixelDepthConverted = depthFloatToInt(pixelDepth);
+	// 						if (pixelDepthConverted < depthBuffer[y * width + x]) {
+	// 				// If it is, we update the depth buffer to the new depth.
+	// 				depthBuffer[y * width + x] = pixelDepthConverted;
+	//
+	// 				// And finally we determine the colour of the pixel, now that
+	// 				// we know our pixel is the closest we have seen thus far.
+	// 			runFragmentShader(frameBuffer, x + (width * y), mesh, triangleIndex, make_float3(u, v, w));
+	// 		}
+	// 	}
+	// }
+}
+
 /**
  * The main procedure which rasterises all triangles on the framebuffer
  * @param transformedMesh         Transformed mesh object
@@ -250,6 +283,17 @@ __host__ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	miny = fmaxf(miny, (unsigned int) 0);
 	maxy = fminf(maxy, height);
 
+	int gridSize = (4*width*height + 512 - 1) / 512;
+	printf("Gridsize: %i\n", gridSize);
+
+
+	// initFrameBuffer<<<gridSize, blockSize>>>(frameBufferPtr);
+	dim3 threadsPerBlock(8, 8);
+	dim3 numBlocks(maxx/threadsPerBlock.x,  /* for instance 512/8 = 64*/
+              maxy/threadsPerBlock.y);
+	rasteriseTriangleLoops <<<numBlocks,threadsPerBlock>>>(v0, v1, v2, mesh, triangleIndex, frameBuffer, depthBuffer, width, height);
+
+
 	// We iterate over each pixel in the triangle's bounding box
 	for (unsigned int x = minx; x < maxx; x++) {
 		for (unsigned int y = miny; y < maxy; y++) {
@@ -278,6 +322,34 @@ __host__ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 }
 
 
+
+
+__global__ void renderAMesh(
+	unsigned long totalItemsToRender_A,
+	workItemGPU* workQueue_A,
+	GPUMesh* meshes_A,
+	unsigned int meshCount_A,
+	unsigned int width,
+	unsigned int height,
+	unsigned char* frameBuffer_A,
+	int* depthBuffer_A,
+	int meshIndex_A,
+	workItemGPU objectToRender_A
+
+){
+			if(threadIdx.x<meshes_A[meshIndex_A].vertexCount / 3){
+				float4 v0 = meshes_A[meshIndex_A].vertices[threadIdx.x * 3 + 0];
+				float4 v1 = meshes_A[meshIndex_A].vertices[threadIdx.x * 3 + 1];
+				float4 v2 = meshes_A[meshIndex_A].vertices[threadIdx.x * 3 + 2];
+
+				runVertexShader(v0, objectToRender_A.distanceOffset, objectToRender_A.scale, width, height);
+				runVertexShader(v1, objectToRender_A.distanceOffset, objectToRender_A.scale, width, height);
+				runVertexShader(v2, objectToRender_A.distanceOffset, objectToRender_A.scale, width, height);
+
+				rasteriseTriangle(v0, v1, v2, meshes_A[meshIndex_A], threadIdx.x, frameBuffer_A, depthBuffer_A, width, height);
+			}
+}
+
 __global__ void renderMeshes(
         unsigned long totalItemsToRender,
         workItemGPU* workQueue,
@@ -288,11 +360,9 @@ __global__ void renderMeshes(
         unsigned char* frameBuffer,
         int* depthBuffer
 ) {
-/*
-		printf("Hello world\n");
+
     for(unsigned int item = 0; item < totalItemsToRender; item++) {
         workItemGPU objectToRender = workQueue[item];
-
         for (unsigned int meshIndex = 0; meshIndex < meshCount; meshIndex++) {
             for(unsigned int triangleIndex = 0; triangleIndex < meshes[meshIndex].vertexCount / 3; triangleIndex++) {
                 float4 v0 = meshes[meshIndex].vertices[triangleIndex * 3 + 0];
@@ -307,14 +377,6 @@ __global__ void renderMeshes(
             }
         }
     }
-
-*/
-				for (unsigned int i = 0; i < (4 * width * height); i+=4) {
-				frameBuffer[i + 0] = 255;
-				frameBuffer[i + 1] = 255;
-				frameBuffer[i + 2] = 255;
-				frameBuffer[i + 3] = 255;
-			}
 }
 
 
@@ -362,17 +424,18 @@ void fillWorkQueue(
 
 }
 
-__global__ void initFrameBuffer(unsigned char* buffer){
-
-	buffer[4*blockIdx.x*blockDim.x*blockDim.y*blockDim.z+4*threadIdx.z*blockDim.x*blockDim.y+4*threadIdx.y*blockDim.y+threadIdx.x + 0] = 0;
-	buffer[4*blockIdx.x*blockDim.x*blockDim.y*blockDim.z+4*threadIdx.z*blockDim.x*blockDim.y+4*threadIdx.y*blockDim.y+threadIdx.x + 1] = 0;
-	buffer[4*blockIdx.x*blockDim.x*blockDim.y*blockDim.z+4*threadIdx.z*blockDim.x*blockDim.y+4*threadIdx.y*blockDim.y+threadIdx.x + 2] = 0;
-	buffer[4*blockIdx.x*blockDim.x*blockDim.y*blockDim.z+4*threadIdx.z*blockDim.x*blockDim.y+4*threadIdx.y*blockDim.y+threadIdx.x + 3] = 255;
-
+__global__ void initFrameBuffer(unsigned char* buffer, unsigned int width, unsigned int height){
+	if(blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.y*blockDim.x+threadIdx.y*blockDim.x+4*threadIdx.x+3<4*width*height){
+		buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.y*blockDim.x+threadIdx.y*blockDim.x+4*threadIdx.x + 0] = 0;
+		buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.y*blockDim.x+threadIdx.y*blockDim.x+4*threadIdx.x + 1] = 0;
+		buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.y*blockDim.x+threadIdx.y*blockDim.x+4*threadIdx.x + 2] = 0;
+		buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.y*blockDim.x+threadIdx.y*blockDim.x+4*threadIdx.x + 3] = 255;
+	}
 }
 
-__global__ void initDepthBuffer(int* buffer){
-	buffer[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.x*blockDim.y+threadIdx.y*blockDim.x+threadIdx.x] = 16777216;
+__global__ void initDepthBuffer(int* bufferDepth, int width, int height){
+	if(blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.x*blockDim.y+threadIdx.y*blockDim.x+threadIdx.x<4*width*height)
+	bufferDepth[blockIdx.x*blockDim.x*blockDim.y*blockDim.z+threadIdx.z*blockDim.x*blockDim.y+threadIdx.y*blockDim.x+threadIdx.x] = 16777216;
 }
 
 // This function kicks off the rasterisation process.
@@ -396,38 +459,68 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
     // We first need to allocate some buffers.
     // The framebuffer contains the image being rendered.
     unsigned char* frameBuffer = new unsigned char[width * height * 4];
+	// 	for (unsigned int i = 0; i < (4 * width * height); i+=4) {
+	// 	frameBuffer[i + 0] = 0;
+	// 	frameBuffer[i + 1] = 0;
+	// 	frameBuffer[i + 2] = 0;
+	// 	frameBuffer[i + 3] = 255;
+	// }
+
 		unsigned char* frameBufferPtr;
 
+
 		cudaError_t(cudaMalloc((void **)&frameBufferPtr, width*height*4*sizeof(char)));
+
 		int gridSize = (4*width*height + 512 - 1) / 512;
+		printf("Gridsize: %i\n", gridSize);
+
 		dim3 blockSize(8, 8, 8);
-		initFrameBuffer<<<gridSize, blockSize>>>(frameBufferPtr);
+		// initFrameBuffer<<<gridSize, blockSize>>>(frameBufferPtr);
+
+		initFrameBuffer<<<gridSize, blockSize>>>(frameBufferPtr, width, height);
 		cudaDeviceSynchronize();
+	// 	cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
+	// 	for (unsigned int i = 0; i < (20); i+=4) {
+	// 		printf("%i", frameBuffer[i]);
+	// 		printf("%i", frameBuffer[i+1]);
+	// 		printf("%i", frameBuffer[i+2]);
+	// 		printf("%i\n", frameBuffer[i+3]);
+	// }
 
 		// The depth buffer is used to make sure that objects closer to the camera occlude/obscure objects that are behind it
 
 		// cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
 
 
-		for (unsigned int i = 0; i < (4 * width * height); i+=4) {
-		frameBuffer[i + 0] = 0;
-		frameBuffer[i + 1] = 0;
-		frameBuffer[i + 2] = 0;
-		frameBuffer[i + 3] = 255;
-	}
+
 
 		int* depthBuffer = new int[width * height];
 		int* depthBufferPtr;
 
+
 		cudaError_t(cudaMalloc((void **)&depthBufferPtr, width*height*sizeof(int)));
+
+
+
 		gridSize = (width*height + 512 - 1) / 512;
-		initDepthBuffer<<<gridSize, blockSize>>>(depthBufferPtr);
+
+		initDepthBuffer<<<gridSize, blockSize>>>(depthBufferPtr, width, height);
+
+	// 	cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
+	// 	for (unsigned int i = 0; i < (20); i+=4) {
+	// 		printf("%i", frameBuffer[i]);
+	// 		printf("%i", frameBuffer[i+1]);
+	// 		printf("%i", frameBuffer[i+2]);
+	// 		printf("%i\n", frameBuffer[i+3]);
+	// }
 		cudaDeviceSynchronize();
 
-		cudaError_t(cudaMemset(depthBufferPtr, 16777126, width*height*sizeof(int)));
+		//cudaError_t(cudaMemset(depthBufferPtr, 16777126, width*height*sizeof(int)));
 		for(unsigned int i = 0; i < width * height; i++) {
 	    	depthBuffer[i] = 16777216; // = 2 ^ 24
 	    }
+
+
 
     float3 boundingBoxMin = make_float3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
     float3 boundingBoxMax = make_float3(std::numeric_limits<float>::min(), std::numeric_limits<float>::min(), std::numeric_limits<float>::min());
@@ -445,6 +538,9 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
             boundingBoxMax.z = std::max(boundingBoxMax.z, meshes.at(i).vertices[vertex].z);
         }
     }
+
+
+
 
 		GPUMesh* meshesCpu = new GPUMesh[meshes.size()];
 
@@ -514,7 +610,7 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 		std::cout << "Not my fault" <<std::endl;
 
 		// renderMeshes(
-		// 	totalItemsToRender, workItemGPUPtr,
+		// 	totalItemsToRender, workQueue,
 		// 	meshesGpu, meshes.size(),
 		// 	width, height, frameBufferPtr, depthBufferPtr);
 
@@ -531,7 +627,7 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
     std::cout << "Finished!" << std::endl;
 
 		cudaError_t(cudaMemcpy(frameBuffer, frameBufferPtr, width*height*4*sizeof(unsigned char), cudaMemcpyDeviceToHost));
-
+		cudaDeviceSynchronize();
 	// 	for (unsigned int i = 0; i < (4 * width * height); i+=4) {
 	// 	frameBuffer[i + 0] = 255;
 	// 	frameBuffer[i + 1] = 255;
